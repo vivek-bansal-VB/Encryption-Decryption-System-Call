@@ -1,0 +1,83 @@
+Task : Implement a system call which will mainly do below mentioned tasks:
+1) Copying one file to another file
+2) Encrypt a file using a key
+3) Decrypt a file using the same key which used for encryption
+
+Files included in the project:
+1) kernel.config submitted into CSE-506 directory.
+2) Makefile submitted into CSE-506 directory.
+3) xcpenc.c submitted into CSE-506 directory which contains the user-level code.
+4) sys_cpenc.c submitted into CSE-506 directory which contains the kernel-level code.
+5) struct.h submitted into CSE-506 directory which contains the declaration of a structure used by both xcpenc.c and sys_cpenc.c
+6) Patch code submitted following the same steps as mentioned in the assignment.
+
+Running the system call:
+1) Copy input.txt to output.txt
+./xcpenc -c input.txt output.txt
+2) Encrypt file input.txt to encrypt.txt using key "password"
+./xcpenc -e input.txt encrypt.txt -p password
+3) Decrypt file encrypt.txt back to original file orig,txt using same key "password"
+./xcpenc -d encrypt.txt orig.txt -p password
+
+Approach:
+1) User-Level Code (xcpenc.c)
+	
+	i) Validate the command line passed by the user using getopt() function.
+	   Use-cases checked:
+	   		a) Any of the file (inputfile/outfile) is missing. 
+	   		b) Input and Outputfile are same.
+	   		c) All flags (-e/-d/-c) are missing.
+	   		d) 2 flags out of -e/-d/-c are enabled at the same time.
+	   		e) Password is provided but both encrypt and decrypt are disabled. 
+	   		f) Password length is too short (less than 6).
+	   		g) Password is not provided but either encrypt or decrypt is enabled.
+	
+	ii) After the validation is successful, I created a structure and populated it with the relevant entry given by the user. 
+	
+	iii) Created an encrypted key from the given password by the user using PKCS5 library.
+	
+	iv) Pack the created structure into void* and send it to kernel via system call.  
+	
+	v) As part of extra credit, flags like -l and -u are also enabled and default cipher is ctr(aes). If user is providing another cipher using -C, then I am overriding the default cipher with this. Default Encryption size is 4K bytes, but gets override if user supplied using -u option. Also, default key size is 16 bytes but gets override if user supplied using -l. This key size is in bits so I am dividing it by 8 if it is a multiple of 8. If it is not a multiple of 8, then I am throwing an error for the user to give valid key length size.
+	
+	vi) All flags are handled and appropriate messages are displayed to the user. -h option is displaying the description of each options of the command to the user. If any error gets occured proper usage of the command is displayed to the user.
+
+
+2) Kernel-Level Code (sys_cpenc.c)
+
+	i) Validation of the parameters in the kernel space. Used access_ok() to check whether access on user space is valid or not. Copy the user space to kernel space using copy_from_user() fxn. Malloc the structure into kernel space and populate this structure by copying the user level variables into it.
+			a) Checked if the combination of flags is valid or not. There should be exactly 1 flag out of encrypt, decrypt and copy to be set.
+			b) Check if passed encrypted key has the same key length which is expected.
+			c) More checks are implemented in the initial code of fxn cpenc().
+
+	ii) After validation, I have used filp_open() to open the file handles of the input and output files. If any error occurs, then display error message.
+
+	iii) Then I have checked whether input and output files are same or not.
+
+	iv)  After that, based on the flag passed by the user I have implemented the code in 3 cases:
+		a) Encrypt: Compute the hash of the key using "MD5" algorithm which will return the 16 bytes hash_value. I have written this hash_value as the fixed length preamble of 16 bytes. After this, I encrypted the block using the encrypted key passed by the user. Default block size is 4K bytes and default cipher algo is "ctr(aes)". I am using the harcoded IV of 16 bytes as of now.
+		b) Decrypt: Read the first 16 bytes of the encrypted file. If these bytes are same as the computed hash value, then decryption will be performed. 
+		c) Copy: I have used vfs_read() and vfs_write() to perform read and write operations. I have used PAGE_SIZE 4K while copying the file. Also I have handled the case when the file size is not aligned with the PAGE_SIZE. Also I have deleted the partially written files using vfs_unlink() fxn if in anycase write fails due to some reasons. To delete partially written files I have used locking mechanism to acquire the lock over parent directory and then did vfs_unlink() and finally released the lock on the parent directory.
+
+	v) I have properly deallocated the kernel memory by creating a label and using goto label whenever I want to delete the allocated memory. 
+Extra credit tasks:
+Proper handling is done when invalid cipher algo or cipher key size is passed from the user end. I have implemented -l, -u, -C flags usage in the code. I have also handled the case of padding in case of multiple cipher support handling.
+
+
+3) Shared header file (struct.h)
+- contains the structure shared by both the kernel and user level code.
+
+Test Scripts:
+Test scripts are present in CSE-506/Test directory which contains the test cases for multiple scenarios. To run them, we have to use sh test01.sh for example in case we want to run test01.sh. 
+
+References:
+1) https://people.netfilter.org/rusty/unreliable-guides/kernel-hacking/routines-kmalloc.html
+2) https://kernel.readthedocs.io/en/sphinx-samples/crypto-API.html#code-example-for-symmetric-key-cipher-operation : To implement the cryptography in the system call
+3) https://kernel.readthedocs.io/en/sphinx-samples/crypto-API.html#code-examples : To implement the cryptography in the system call
+4) https://stackoverflow.com/questions/16861332/how-to-compute-sha1-of-an-array-in-linux-kernel : To compute md5 in kernel level code
+5) https://stackoverflow.com/questions/11126027/using-md5-in-kernel-space-of-linux :  : To compute md5 in kernel level code
+6) https://www3.cs.stonybrook.edu/~ezk/cse506-s19/hw1.txt
+7) https://stackoverflow.com/questions/9771212/how-to-use-pkcs5-pbkdf2-hmac-sha1 : To encrypt the password into an encrypted key in user-level code
+8) https://linux.die.net/man/3/getopt : To see usage of getopt in user-level code
+9) http://pubs.opengroup.org/onlinepubs/009695399/functions/getopt.html : To see usage of getopt in user-level code
+
